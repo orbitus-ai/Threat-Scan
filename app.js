@@ -2056,31 +2056,65 @@
   // Ask the AI through the local key-protected proxy. Always resolves with
   // { mode: 'ai' | 'offline', ... } - it never throws; network problems are
   // reported as offline mode so the built-in guide can take over.
-  async function askAi(question) {
-    const messages = chatHistory.concat([{ role: 'user', content: question }]).slice(-16);
+   async function askAi(question) {
+    const messages = chatHistory.concat([
+      { role: 'user', content: question }
+    ]).slice(-16);
+
     const payload = { messages };
+
     if (lastResult) {
       const band = BANDS[lastResult.band] || bandFor(lastResult.score);
-      payload.context = 'Summary of the last scan performed in this app: score ' + lastResult.score + '/100 (' + band.label +
-        '), detection status "' + (lastResult.status || 'unknown') + '", confidence "' +
-        (lastResult.confidence || 'Low') + '".';
+      payload.context =
+        'Last scan: score ' + lastResult.score +
+        '/100 (' + band.label + '), status ' +
+        (lastResult.status || 'unknown') + '.';
     }
+
     try {
-      const res = await fetch(INTEL_BASE + '/api/chat', {
-        method: 'POST',
-        headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(32000)
-      });
-      if (!res.ok) return { mode: 'offline', detail: 'assistant service error (HTTP ' + res.status + ')' };
+      const res = await fetch(
+        'https://threatscan-assistant.minecraftgun-30.workers.dev/chat',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(45000)
+        }
+      );
+
       const data = await res.json();
-      if (data && data.mode === 'ai' && data.reply) return { mode: 'ai', reply: String(data.reply) };
-      return { mode: 'offline', detail: (data && data.detail) || '' };
+
+      if (!res.ok) {
+        return {
+          mode: 'offline',
+          detail: data.error || ('HTTP ' + res.status)
+        };
+      }
+
+      const reply =
+        data.reply ||
+        data.response ||
+        data.result?.response ||
+        data.choices?.[0]?.message?.content;
+
+      if (reply) {
+        return { mode: 'ai', reply: String(reply) };
+      }
+
+      return {
+        mode: 'offline',
+        detail: data.error || 'Unexpected AI response format'
+      };
     } catch (e) {
-      return { mode: 'offline', detail: /abort|timeout/i.test(e && e.message) ? 'AI did not answer in time' : 'assistant service unreachable' };
+      return {
+        mode: 'offline',
+        detail: 'AI connection failed: ' + (e.message || 'network error')
+      };
     }
   }
-
   function scanUrlAction(link) {
     return {
       label: 'Scan “' + shorten(link, 24) + '”',
